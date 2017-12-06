@@ -2,7 +2,7 @@
 
 //Must modify IP/network settings depending on computer
 #include <SPI.h>
-#include <Ethernet.h>
+#include <Ethernet2.h>
 
 // Output pins.
 static int output[] = {0, 1, 2, 3};
@@ -21,22 +21,27 @@ static int BUTTON_PIN = TEMP_PIN + 1; //pin 10 for button input
 static int buttonState = 0;
 static bool buttonPressed = false;
 static long lastDebounceTime = 0;
-static long DEBOUNCE_DELAY = 50;
+static long DEBOUNCE_wait = 50;
 
 static long lastTime = 0;
-static long DELAY_AMOUNT = 2000;
+static long wait_AMOUNT = 2000;
 
 
-// this must be unique
-byte mac[] = { 0xAA, 0xBB, 0xCC, 0x00, 0x20, 0x17 };  
-// change network settings to yours
-IPAddress ip(  10, 30, 248, 16 );    
-IPAddress gateway( 10, 30, 0, 1 );
-IPAddress subnet( 255, 255, 0, 0 );
-// change server to your email server ip or domain
-// IPAddress server( 1, 2, 3, 4 );
-char server[] = "smtp-mail.outlook.com";
+// Ethernet settings
+byte mac[] = { 0x90, 0xA2, 0xDA, 0x10, 0xE5, 0xF2 };
+
+IPAddress ip( 10, 90, 5, 61 );
+//IPAddress ip( 129, 252, 11, 16 );
+
+//IPAddress gateway( 10, 90, 5, 1 );
+//IPAddress subnet( 255, 255, 255, 192 );
+
+// Email settings
+IPAddress server( 66, 228, 43, 14 ); //smtp2go
+int port = 2525; //smtp2go port
 EthernetClient client;
+char fromemail[] = "csce211_group@cse.sc.edu";
+char toemail[] = "hdamron@email.sc.edu";
 
 // DHT11 Temperature and Humidity sensor
 dht11 DHT11;
@@ -89,7 +94,7 @@ void color_led(int base, int num) {
   }
 }
 
-void debounce() {
+bool debounce() {
   int reading = digitalRead(BUTTON_PIN);
 //  Serial.println(reading); //TODO remove
   if (reading == LOW) {
@@ -97,20 +102,24 @@ void debounce() {
     buttonPressed = false;
   }
   
-  if (!buttonPressed && (millis() - lastDebounceTime) > DEBOUNCE_DELAY) {
+  if (!buttonPressed && (millis() - lastDebounceTime) > DEBOUNCE_wait) {
     buttonState += 1;
     buttonState %= 3; // add 1 mod 3
     buttonPressed = true;
+    return true;
   }
+  return false;
 }
 
 // the setup routine runs once when you press reset:
 void setup() {
   DHT11.attach(TEMP_PIN);
   Serial.begin(9600);
+  
+  Serial.println("Setting up ");
+ 
 
   for (int i = BASE; i < BASE + 2 * BITS; ++i) {
-    Serial.print("Setting up ");
     pinMode(i, OUTPUT);
   }
 
@@ -120,15 +129,17 @@ void setup() {
 
   pinMode(BUTTON_PIN, INPUT);
 
-  sendEmail(); //TODO remove
+  Ethernet.begin(mac, ip); //, gateway, subnet);
+  Serial.print("IP = ");
+  Serial.println(Ethernet.localIP());
 
-  delay(1000);
+  wait(1000);
 }
 
 // the loop routine runs over and over again forever:
 void loop() {
-  debounce();
-  if (millis() - lastTime > DELAY_AMOUNT) {
+  bool button = debounce();
+  if (millis() - lastTime > wait_AMOUNT) {
     int chk = DHT11.read();
     lastTime = millis();
     fahrenheit = DHT11.fahrenheit();
@@ -149,71 +160,98 @@ void loop() {
   }
   
   show2digit(BASE, reading);
-
+  
   color_led(LED_BASE, reading);
+
+  if (button) {
+    Serial.println("Sending email");
+    sendEmail(emailText(fahrenheit, celcius, humidity));
+  }
+}
+
+String emailText(int fahrenheit, int celcius, int humidity) {
+  return String("Arduino DHT Reading")
+    + "\r\n* Temp (Fahrenheit): " + String(fahrenheit)
+    + "\r\n* Temp (Celcius): " + String(celcius)
+    + "\r\n* Humidity (%): " + String(humidity);
 }
  
-byte sendEmail()
-{
+byte sendEmail(String text) {
   byte thisByte = 0;
   byte respCode;
- 
-  if(client.connect(server,25) == 1) {
-    Serial.println(F("connected"));
+
+  wait(1);
+  byte statusNum = client.connect(server,port);
+  if(statusNum == 1) {
+    Serial.println("connected");
   } else {
-    Serial.println(F("connection failed"));
+    Serial.print("connection failed with status: ");
+    Serial.println(statusNum);
     return 0;
   }
  
   if(!eRcv()) return 0;
-  Serial.println(F("Sending helo"));
+  Serial.println("Sending helo");
  
 // change to your public ip
-  client.println(F("helo 162.242.50.250"));
+  client.print("helo ");
+  client.print(ip);
+  client.print("\r\n");
  
   if(!eRcv()) return 0;
-  Serial.println(F("Sending From"));
+  Serial.println("Sending From");
  
 // change to your email address (sender)
-  client.println(F("MAIL From: <mstjohn@email.sc.edu>"));
+  client.print("MAIL From: <");
+  client.print(fromemail);
+  client.print(">\r\n");
  
   if(!eRcv()) return 0;
  
 // change to recipient address
-  Serial.println(F("Sending To"));
-  client.println(F("RCPT To: <michellegstjohn@gmail.com>"));
+  Serial.println("Sending To");
+  client.print("RCPT To: <");
+  client.print(toemail);
+  client.print(">\r\n");
  
   if(!eRcv()) return 0;
  
-  Serial.println(F("Sending DATA"));
-  client.println(F("DATA"));
+  Serial.println("Sending DATA");
+  client.print("DATA\r\n");
  
   if(!eRcv()) return 0;
  
-  Serial.println(F("Sending email"));
+  Serial.println("Sending email");
  
 // change to recipient address
-  client.println(F("To: You <michellegstjohn@gmail.com>"));
+  client.print("To: You <");
+  client.print(toemail);
+  client.print(">\r\n");
  
 // change to your address
-  client.println(F("From: Me <mstjohn@email.sc.edu>"));
+  client.print("From: Circuit Project Group <");
+  client.print(fromemail);
+  client.print(">\r\n");
  
-  client.println(F("Subject: Arduino email test\r\n"));
+  client.print("Subject: Arduino Email\r\n");
  
-  client.println(F("This is from my Arduino!"));
+  client.print(text);
  
-  client.println(F("."));
- 
-  if(!eRcv()) return 0;
- 
-  Serial.println(F("Sending QUIT"));
-  client.println(F("QUIT"));
+  client.print("\r\n.\r\n");
  
   if(!eRcv()) return 0;
  
+  Serial.println("Sending QUIT");
+  client.print("QUIT\r\n");
+ 
+  if(!eRcv()) return 0;
+
+  wait(1);
+  client.flush();
   client.stop();
+  wait(1);
  
-  Serial.println(F("disconnected"));
+  Serial.println("disconnected");
  
   return 1;
 }
@@ -225,13 +263,13 @@ byte eRcv()
   int loopCount = 0;
  
   while(!client.available()) {
-    delay(1);
+    wait(1);
     loopCount++;
  
     // if nothing received for 10 seconds, timeout
     if(loopCount > 10000) {
       client.stop();
-      Serial.println(F("\r\nTimeout"));
+      Serial.println("\r\nTimeout");
       return 0;
     }
   }
@@ -259,27 +297,33 @@ void efail()
   byte thisByte = 0;
   int loopCount = 0;
  
-  client.println(F("QUIT"));
+  client.println("QUIT");
  
   while(!client.available()) {
-    delay(1);
+    wait(1);
     loopCount++;
  
     // if nothing received for 10 seconds, timeout
     if(loopCount > 10000) {
       client.stop();
-      Serial.println(F("\r\nTimeout"));
+      Serial.println("\r\nTimeout");
       return;
     }
   }
  
   while(client.available())
-  {  
+  {
     thisByte = client.read();    
     Serial.write(thisByte);
   }
  
   client.stop();
  
-  Serial.println(F("disconnected"));
+  Serial.println("disconnected");
 }
+
+void wait(long mil) {
+  long start = millis();
+  while(millis() - start < mil);
+}
+
